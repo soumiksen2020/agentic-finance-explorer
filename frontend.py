@@ -1,0 +1,354 @@
+import streamlit as st
+import requests
+import time
+from datetime import datetime
+from bs4 import BeautifulSoup
+import yfinance as yf
+import plotly.graph_objects as go
+
+# --- 1. PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="FinAI | Research Assistant", 
+    page_icon="🔬", 
+    layout="wide",
+    initial_sidebar_state="auto"
+)
+
+# --- 2. CUSTOM STYLING ---
+st.markdown("""
+    <style>
+    [data-testid="InputInstructions"] { display: none !important; }
+    /* Fixes the wrapping issue - forces numbers to stay on one line */
+    [data-testid="stMetricValue"] > div { 
+        font-size: 1.3rem !important; 
+        font-weight: 700 !important;
+        white-space: nowrap !important; 
+    }
+    .risk-bullet { 
+        background-color: #fff5f5; padding: 12px; border-radius: 8px; 
+        border-left: 4px solid #9b2c2c; margin-bottom: 10px; 
+        font-size: 0.9rem; color: #9b2c2c; line-height: 1.4; 
+    }
+    .catalyst-bullet { 
+        background-color: #f0fdf4; padding: 12px; border-radius: 8px; 
+        border-left: 4px solid #166534; margin-bottom: 10px; 
+        font-size: 0.9rem; color: #166534; line-height: 1.4; 
+    }
+    .legal-disclaimer {
+        margin-top: 50px; padding: 15px; border-top: 1px solid #e2e8f0;
+        font-size: 0.8rem; color: #64748b; text-align: center;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 3. THE SMART PRICE ENGINE (Groww + Google + Auto-Router) ---
+def get_current_price(ticker):
+    ticker_upper = ticker.upper().strip()
+    
+    clean_ticker = ticker_upper
+    for suffix in ['.NSE', '.NS', '.BSE', '.BO']:
+        if clean_ticker.endswith(suffix):
+            clean_ticker = clean_ticker[:-len(suffix)]
+            break
+            
+    if clean_ticker.isdigit() or ticker_upper.endswith(('.BO', '.BSE')):
+        groww_exchange = "BSE"
+        google_exchange = "BOM"
+    else:
+        groww_exchange = "NSE"
+        google_exchange = "NSE"
+        
+    headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+
+    try:
+        url = f"https://groww.in/v1/api/stocks_data/v1/tr_live_prices/exchange/{groww_exchange}/segment/CASH/{clean_ticker}/latest"
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            price = float(data.get('ltp', 0.0))
+            prev_close = float(data.get('close', 0.0))
+            if price > 0:
+                return price, "₹", (price - prev_close), datetime.now().weekday() >= 5
+    except Exception:
+        pass
+
+    try:
+        url = f"https://www.google.com/finance/quote/{clean_ticker}:{google_exchange}"
+        res = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        price_div = soup.find('div', {'data-last-price': True})
+        if price_div:
+            price = float(price_div['data-last-price'])
+            prev_close_div = soup.find('div', {'data-previous-close': True})
+            change = price - float(prev_close_div['data-previous-close']) if prev_close_div else 0.0
+            return price, "₹", change, datetime.now().weekday() >= 5
+    except Exception:
+        pass
+        
+    try:
+        yf_ticker = f"{clean_ticker}.BO" if groww_exchange == "BSE" else f"{clean_ticker}.NS"
+        stock = yf.Ticker(yf_ticker)
+        hist = stock.history(period="5d")
+        if not hist.empty:
+            price = float(hist['Close'].iloc[-1])
+            prev_close = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else price
+            return price, "₹", (price - prev_close), datetime.now().weekday() >= 5
+    except Exception:
+        pass
+
+    return None, None, None, False
+
+@st.cache_data(ttl=1800)
+def get_fundamentals(ticker):
+    try:
+        backend_url = "https://agentic-finance-explorer.onrender.com"
+        response = requests.get(f"{backend_url}/fundamentals/{ticker}", timeout=10)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        print(f"Fundamentals fetch error: {e}")
+    return {
+        "mcap": "N/A", "pe": "N/A", "high52": "N/A", "low52": "N/A",
+        "eps": "N/A", "book_value": "N/A", "div_yield": "N/A",
+        "roce": "N/A", "roe": "N/A", "debt_eq": "N/A"
+    }
+
+# --- 4. UI FRAGMENTS ---
+@st.fragment(run_every=10) 
+def live_price_sidebar(ticker_symbol):
+    price, currency, change, is_weekend = get_current_price(ticker_symbol)
+    if price:        
+        # THE FIX: Drop the currency symbol here so Streamlit's regex can swallow the minus sign
+        if change < 0:
+            delta_str = f"-{abs(change):.2f} Today"
+        else:
+            delta_str = f"{change:.2f} Today"
+            
+        st.metric(
+            label=f"Live Price: {ticker_symbol}", 
+            value=f"{currency} {price:.2f}", 
+            delta=delta_str
+        )
+        st.caption("⏸ Market Closed" if is_weekend else "🟢 Market Open")
+
+        # FEATURE 3: Minimalist Fundamentals inside a collapsible expander
+        with st.expander("📊 Fundamental Snapshot", expanded=False):
+            funds = get_fundamentals(ticker_symbol)
+
+            st.metric(label="Market Cap", value=funds['mcap'],
+                help="Total value of all shares. What it would cost to buy the entire company.")
+            st.metric(label="P/E Ratio", value=funds['pe'],
+                help="Price vs earnings. Lower = cheaper relative to profit.")
+            st.metric(label="52-Week High", value=funds['high52'],
+                help="Highest price the stock reached in the last year.")
+            st.metric(label="52-Week Low", value=funds['low52'],
+                help="Lowest price the stock reached in the last year.")
+
+            st.markdown("---")
+
+            st.metric(label="EPS", value=funds['eps'],
+                help="Earnings Per Share — profit attributable to each share.")
+            st.metric(label="Book Value", value=funds['book_value'],
+                help="Net asset value per share. What shareholders would get if the company was liquidated.")
+            st.metric(label="Dividend Yield", value=funds['div_yield'],
+                help="Annual dividend as a % of current price. Higher = more passive income.")
+
+            st.markdown("---")
+
+            st.metric(label="ROCE", value=funds['roce'],
+                help="Return on Capital Employed. How efficiently the company uses its capital.")
+            st.metric(label="ROE", value=funds['roe'],
+                help="Return on Equity. Profit generated for every rupee of shareholder equity.")
+            st.metric(label="Debt / Equity", value=funds['debt_eq'],
+                help="How much debt the company carries vs shareholder equity. Lower is safer.")
+    else:
+        st.warning("⚠️ Market data unavailable.")
+
+@st.fragment
+def render_interactive_chart(ticker):
+    st.markdown("### 📈 Price Action")
+    
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        chart_type = st.radio("Type", ["Line", "Candlestick"], horizontal=True, label_visibility="collapsed")
+    with col2:
+        timeframe = st.radio("Time", ["1D", "1M", "3M", "6M"], horizontal=True, label_visibility="collapsed", index=3)
+        
+    tf_map = {"1D": ("1d", "5m"), "1M": ("1mo", "1d"), "3M": ("3mo", "1d"), "6M": ("6mo", "1d")}
+    period, interval = tf_map[timeframe]
+    
+    try:
+        ticker_upper = ticker.upper().strip()
+        
+        clean_ticker = ticker_upper
+        for suffix in ['.NSE', '.NS', '.BSE', '.BO']:
+            if clean_ticker.endswith(suffix):
+                clean_ticker = clean_ticker[:-len(suffix)]
+                break
+                
+        if clean_ticker.isdigit() or ticker_upper.endswith(('.BO', '.BSE')):
+            yf_ticker = f"{clean_ticker}.BO"
+        else:
+            yf_ticker = f"{clean_ticker}.NS"
+            
+        hist = yf.Ticker(yf_ticker).history(period=period, interval=interval)
+        
+        if hist.empty and period == "1d":
+            hist = yf.Ticker(yf_ticker).history(period="5d", interval=interval)
+            if not hist.empty:
+                last_day = hist.index[-1].date()
+                hist = hist[hist.index.date == last_day]
+        
+        if not hist.empty:
+            fig = go.Figure()
+            if chart_type == "Candlestick":
+                fig.add_trace(go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close']))
+            else:
+                fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], mode='lines', line=dict(color='#2563eb', width=2)))
+                
+            fig.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0),
+                height=350,
+                xaxis_rangeslider_visible=False,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)'
+            )
+            
+            plotly_config = {
+                'displaylogo': False,
+                'modeBarButtonsToRemove': [
+                    'zoom2d', 'pan2d', 'select2d', 'lasso2d', 
+                    'zoomIn2d', 'zoomOut2d', 'resetScale2d'
+                ]
+            }
+            
+            st.plotly_chart(fig, use_container_width=True, config=plotly_config)
+        else:
+            st.warning("⚠️ Chart data currently unavailable for this ticker.")
+    except Exception as e:
+        st.error(f"Could not load chart: {e}")
+
+# --- 5. SESSION STATE & TRIGGERS ---
+if "is_analyzing" not in st.session_state: st.session_state.is_analyzing = False
+if "analysis_results" not in st.session_state: st.session_state.analysis_results = None
+if "analysis_source" not in st.session_state: st.session_state.analysis_source = None
+if "current_ticker" not in st.session_state: st.session_state.current_ticker = None
+if "ticker_input" not in st.session_state: st.session_state.ticker_input = ""
+
+def trigger_analysis():
+    if st.session_state.ticker_input.strip():
+        st.session_state.is_analyzing = True
+        st.session_state.analysis_results = None
+        st.session_state.current_ticker = st.session_state.ticker_input.upper().strip()
+    else:
+        st.session_state.is_analyzing = False
+
+# --- 6. MAIN UI LOGIC ---
+def main():
+    st.title("🔬 AI Investment Research Assistant")
+    st.subheader("Autonomous Information Synthesis & Risk Highlighting")
+
+    with st.sidebar:
+        #st.header("⚙️ Settings")
+        st.text_input(
+            "Stock Ticker", 
+            key="ticker_input", 
+            placeholder="e.g. RELIANCE.NS", 
+            on_change=trigger_analysis
+        )
+        
+        st.button("🔍 Analyze Data", use_container_width=True, on_click=trigger_analysis)
+        st.markdown("---")
+        
+        if st.session_state.ticker_input.strip():
+            live_price_sidebar(st.session_state.ticker_input.upper().strip())
+
+    if st.session_state.is_analyzing and st.session_state.current_ticker:
+        if st.session_state.analysis_results is None:
+            with st.status(f"Agents synthesizing data for {st.session_state.current_ticker}...", expanded=True) as status_box:
+                try:                    
+                    backend_url = "https://agentic-finance-explorer.onrender.com" 
+                    response = requests.post(f"{backend_url}/analyze", json={"ticker": st.session_state.current_ticker})
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get("status") == "completed":
+                            st.session_state.analysis_results, st.session_state.analysis_source = data.get("result"), data.get("source")
+                            status_box.update(label="Intelligence Retrieved!", state="complete", expanded=False)
+                            time.sleep(1)
+                            st.rerun() 
+                        else:
+                            job_id = data.get("job_id")
+                            max_attempts, attempts = 25, 0
+                            while attempts < max_attempts:
+                                poll_res = requests.get(f"{backend_url}/status/{job_id}")
+                                if poll_res.status_code != 200: break
+                                poll_data = poll_res.json()
+                                current_status = poll_data.get("status")
+        
+                                if current_status == "completed":
+                                    st.session_state.analysis_results, st.session_state.analysis_source = poll_data.get("result"), "Live Agent Analysis"
+                                    status_box.update(label="Analysis Complete!", state="complete", expanded=False)
+                                    #time.sleep(1)
+                                    st.rerun() 
+                                    break 
+                                elif current_status == "failed":
+                                    status_box.update(label=f"Analysis failed.", state="error")
+                                    break
+                                
+                                status_box.update(label=f"🕵️ Agents are compiling reports...", state="running")
+                                time.sleep(5)
+                                attempts += 1
+                except Exception as e:
+                    status_box.update(label=f"System Error: {str(e)}", state="error")
+                    st.session_state.is_analyzing = False
+
+        result = st.session_state.analysis_results
+        if result:
+            source = st.session_state.analysis_source
+            if "Intelligence" in source: st.info(f"📁 Source: {source} (Price Stable Cache)")
+            else: st.success(f"🟢 Source: {source}")
+
+            # Top Metrics
+            m1, m2 = st.columns(2)
+            with m1:
+                st.metric(
+                    label="Technical Signal", 
+                    value=result.get('technical_signal', 'N/A'), 
+                    help="The AI's guess on where the price is heading based on recent chart patterns. 'Bullish' means it looks like it will go up, 'Bearish' means it looks like it will go down."
+                )
+            with m2:
+                st.metric(
+                    label="Market Sentiment Score", 
+                    value=f"{result.get('sentiment_score', 0)}/10", 
+                    help="How people feel about the stock right now. 1 means people are panicking and selling. 10 means people are excited and buying."
+                )
+                        
+            # AI Analysis Columns
+            col_bull, col_bear = st.columns(2)
+            with col_bull:
+                st.markdown("### 📈 Key Catalysts")
+                catalysts = result.get('key_catalysts', [])
+                if isinstance(catalysts, list) and catalysts:
+                    for c in catalysts: st.markdown(f'<div class="catalyst-bullet">✅ {c}</div>', unsafe_allow_html=True)
+                else: st.write("No positive catalysts identified.")
+                
+            with col_bear:
+                st.markdown("### 🛡️ Risk Audit")
+                risks = result.get('risk_summary', [])
+                if isinstance(risks, list) and risks:
+                    for r in risks: st.markdown(f'<div class="risk-bullet">⚠️ {r}</div>', unsafe_allow_html=True)
+                else: st.write("No significant risks identified.")
+
+            # FEATURE 1: Interactive Chart
+            render_interactive_chart(st.session_state.current_ticker)
+            st.markdown("---")
+    
+    st.markdown("""
+        <div class="legal-disclaimer">
+            <strong>Disclaimer:</strong> This application utilizes Large Language Models (LLMs) to synthesize public financial data for informational purposes only. It is not financial advice.
+        </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()

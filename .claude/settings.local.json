@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -m 15 -H 'User-Agent: Mozilla/5.0' https://groww.in/v1/api/stocks_data/v1/company/search_id/reliance-industries-ltd -o /tmp/groww_co.json)",
+      "Bash(python3 -c \"import json;d=json.load\\(open\\('/tmp/groww_co.json'\\)\\);print\\(list\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s -m 15 -H 'User-Agent: __TRACKED_VAR__' https://groww.in/v1/api/stocks_data/v1/company/search_id/reliance-industries-ltd -o _groww_co.json)",
+      "Bash(python3 -c \"import json;d=json.load\\(open\\('_groww_co.json'\\)\\);print\\(list\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(curl -s -m 15 -H 'User-Agent: __TRACKED_VAR__' https://groww.in/v1/api/stocks_data/v1/company/search_id/reliance-industries-ltd -o _g.json)",
+      "Bash(rm -f _g.json)"
+    ]
+  }
+}
