@@ -101,7 +101,7 @@ def get_current_price(ticker):
 @st.cache_data(ttl=1800)
 def get_fundamentals(ticker):
     try:
-        backend_url = "https://agentic-finance-explorer.onrender.com"
+        backend_url = "http://localhost:8000"
         response = requests.get(f"{backend_url}/fundamentals/{ticker}", timeout=10)
         if response.status_code == 200:
             return response.json()
@@ -267,7 +267,7 @@ def main():
         if st.session_state.analysis_results is None:
             with st.status(f"Agents synthesizing data for {st.session_state.current_ticker}...", expanded=True) as status_box:
                 try:                    
-                    backend_url = "https://agentic-finance-explorer.onrender.com" 
+                    backend_url = "http://localhost:8000" 
                     response = requests.post(f"{backend_url}/analyze", json={"ticker": st.session_state.current_ticker})
                     
                     if response.status_code == 200:

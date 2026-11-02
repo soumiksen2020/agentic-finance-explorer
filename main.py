@@ -5,6 +5,7 @@ from crewai_tools import SerperDevTool
 from tools import stock_price_analyzer
 from pydantic import BaseModel, Field
 from typing import List
+from google.genai import types
 
 class FinancialAnalysisOutput(BaseModel):
     ticker: str = Field(description="The stock ticker symbol analyzed")
@@ -18,7 +19,26 @@ load_dotenv()
 def run_financial_analysis(ticker: str):
     # 1. Tools & LLM Setup
     search_tool = SerperDevTool()
-    my_llm = LLM(model="openai/gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0)
+    retry_options = types.HttpRetryOptions(
+        attempts=5,
+        initial_delay=2,
+        max_delay=30,
+        exp_base=2,
+        jitter=0.5,
+        http_status_codes=[429, 500, 502, 503, 504]
+    )
+
+    my_llm = LLM(
+        model="gemini/gemini-3.8-flash",
+        api_key=os.getenv("GEMINI_API_KEY"),
+        temperature=0,
+        client_params={
+            "http_options": types.HttpOptions(
+                retry_options=retry_options,
+                timeout=120000
+            )
+        }
+    )
 
     # 2. Define Agents
     quant_analyst = Agent(

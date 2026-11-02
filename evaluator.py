@@ -1,10 +1,18 @@
 import os
 import json
-from openai import OpenAI
+from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # We reuse the same OpenAI client that CrewAI uses
 # No new API keys needed
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+load_dotenv()
+client = ChatGoogleGenerativeAI(
+    model="gemini-3.8-flash",
+    google_api_key=os.getenv("GEMINI_API_KEY"),
+    temperature=0,
+    max_output_tokens=200
+)
 
 
 # ─────────────────────────────────────────────
@@ -109,13 +117,9 @@ Example format:
 
     try:
         print(f"🤖 Sending to LLM judge for {ticker}...")
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,       # deterministic scoring
-            max_tokens=200,
-        )
-        raw = response.choices[0].message.content.strip()
+        response = client.invoke(prompt)
+        raw = response.content.strip()
+        # raw = response.choices[0].message.content.strip()
 
         # Strip markdown code fences if the model adds them despite instructions
         if raw.startswith("```"):

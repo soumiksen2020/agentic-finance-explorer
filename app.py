@@ -162,10 +162,18 @@ def _fetch_groww_fundamentals(symbol: str, result: dict) -> bool:
 @app.get("/fundamentals/{ticker}")
 def get_fundamentals(ticker: str):
     clean = ticker.upper().strip()
-    for suffix in ['.NSE', '.NS', '.BSE', '.BO']:
-        if clean.endswith(suffix):
-            clean = clean[:-len(suffix)]
+
+    # Identify the exchange from the supplied ticker.
+    is_indian = clean.endswith((".NSE", ".NS", ".BSE", ".BO"))
+
+    # Remove suffix only for Groww lookup.
+    groww_symbol = clean
+    for suffix in (".NSE", ".NS", ".BSE", ".BO"):
+        if groww_symbol.endswith(suffix):
+            groww_symbol = groww_symbol[:-len(suffix)]
             break
+
+    currency = "₹" if is_indian else "$"
 
     result = {
         "mcap": "N/A", "pe": "N/A", "high52": "N/A", "low52": "N/A",
@@ -173,9 +181,9 @@ def get_fundamentals(ticker: str):
         "roe": "N/A", "eps": "N/A", "debt_eq": "N/A"
     }
 
-    # --- PRIMARY: Groww (works from datacenter IPs) ---
-    if _fetch_groww_fundamentals(clean, result):
-        return result
+     # --- PRIMARY: Groww (works from datacenter IPs) ---
+    if is_indian:
+    	_fetch_groww_fundamentals(groww_symbol, result)
 
     # --- FALLBACK: yfinance (works locally; blocked on many cloud hosts) ---
     def sf(val):
@@ -197,25 +205,48 @@ def get_fundamentals(ticker: str):
         return None
 
     try:
-        # Try NSE first, fall back to BSE
-        stock = yf.Ticker(f"{clean}.NS")
-        fast = stock.fast_info
+        # Select Yahoo Finance ticker based on the supplied exchange.
+        if is_indian:
+            if clean.endswith((".NS", ".NSE")):
+                yahoo_ticker = f"{groww_symbol}.NS"
+            elif clean.endswith((".BO", ".BSE")):
+                yahoo_ticker = f"{groww_symbol}.BO"
+            else:
+                yahoo_ticker = f"{groww_symbol}.NS"
 
-        # Test if this ticker is valid — fast_info.last_price is None for invalid tickers
-        if not getattr(fast, 'last_price', None):
-            stock = yf.Ticker(f"{clean}.BO")
+            stock = yf.Ticker(yahoo_ticker)
+            fast = stock.fast_info
+
+            # Fall back to BSE if NSE data is unavailable.
+            if not getattr(fast, "last_price", None) and yahoo_ticker.endswith(".NS"):
+                yahoo_ticker = f"{groww_symbol}.BO"
+                stock = yf.Ticker(yahoo_ticker)
+                fast = stock.fast_info
+        else:
+            # Unqualified symbols are treated as US-listed stocks.
+            yahoo_ticker = clean
+            stock = yf.Ticker(yahoo_ticker)
             fast = stock.fast_info
 
         # --- LAYER 1: fast_info — always reliable ---
-        shares  = sf(getattr(fast, 'shares', None))
-        price   = sf(getattr(fast, 'last_price', None))
-        mcap    = sf(getattr(fast, 'market_cap', None))
-        yr_high = sf(getattr(fast, 'year_high', None))
-        yr_low  = sf(getattr(fast, 'year_low', None))
+        fast_data = dict(fast)
 
-        if mcap:    result['mcap']   = f"₹{mcap/1e7:,.0f} Cr"
-        if yr_high: result['high52'] = f"₹{yr_high:.2f}"
-        if yr_low:  result['low52']  = f"₹{yr_low:.2f}"
+        shares  = sf(fast_data.get('shares') or fast_data.get('sharesOutstanding'))
+        price   = sf(fast_data.get('lastPrice') or fast_data.get('last_price'))
+        mcap    = sf(fast_data.get('marketCap') or fast_data.get('market_cap'))
+        yr_high = sf(fast_data.get('yearHigh') or fast_data.get('year_high'))
+        yr_low  = sf(fast_data.get('yearLow') or fast_data.get('year_low'))
+
+        if mcap:
+            if is_indian:
+                result['mcap'] = f"₹{mcap/1e7:,.0f} Cr"
+            else:
+                result['mcap'] = f"${mcap/1e9:,.2f} B"
+
+        if yr_high:
+            result['high52'] = f"{currency}{yr_high:.2f}"
+        if yr_low:
+            result['low52'] = f"{currency}{yr_low:.2f}"
 
         # --- LAYER 2: get_info() — try first for derived metrics ---
         info = {}
@@ -224,8 +255,10 @@ def get_fundamentals(ticker: str):
         except Exception as e:
             print(f"get_info() failed for {clean}: {e}")
        
-        if info.get('trailingEps'):   result['eps']        = fmt(info['trailingEps'], prefix='₹')
-        if info.get('bookValue'):     result['book_value'] = fmt(info['bookValue'], prefix='₹')
+        if info.get('trailingEps'):
+            result['eps'] = fmt(info['trailingEps'], prefix=currency)
+        if info.get('bookValue'):
+            result['book_value'] = fmt(info['bookValue'], prefix=currency)
         if info.get('returnOnEquity'):result['roe']        = fmt(info['returnOnEquity'] * 100, suffix='%')
         if info.get('debtToEquity'):  result['debt_eq']    = fmt(info['debtToEquity'])
 
@@ -260,11 +293,11 @@ def get_fundamentals(ticker: str):
                 
             # Fallback EPS: Net Income / shares
             if result['eps'] == 'N/A' and net_income and shares and shares > 0:
-                result['eps'] = f"₹{net_income / shares:.2f}"
+                 result['eps'] = f"{currency}{net_income / shares:.2f}"
 
             # Fallback Book Value: Common Equity / shares
             if result['book_value'] == 'N/A' and common_equity and shares and shares > 0:
-                result['book_value'] = f"₹{common_equity / shares:.2f}"
+                result['book_value'] = f"{currency}{common_equity / shares:.2f}"
 
             # Fallback ROE: Net Income / Common Equity
             if result['roe'] == 'N/A' and net_income and common_equity and common_equity > 0:
