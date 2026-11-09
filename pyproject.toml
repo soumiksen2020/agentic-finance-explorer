@@ -12,6 +12,7 @@ dependencies = [
     "langchain-google-genai>=4.2.0",
     "langfuse<3",
     "litellm>=1.102.4",
+    "mcp==1.30.0",
     "pandas>=2.3.3",
     "pandas-ta>=0.4.71b0",
     "plotly>=6.5.2",

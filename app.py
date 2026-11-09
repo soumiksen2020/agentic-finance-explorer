@@ -16,7 +16,7 @@ from evaluator import run_eval
 
 # --- 1. DATABASE CONFIGURATION ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "market_data.db")
+DB_PATH = os.getenv("DB_PATH", os.path.join(BASE_DIR, "market_data.db"))
 
 def init_db():
     try:

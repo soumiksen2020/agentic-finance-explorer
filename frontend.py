@@ -6,7 +6,13 @@ from bs4 import BeautifulSoup
 import yfinance as yf
 import plotly.graph_objects as go
 import os
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+try:
+    BACKEND_URL = st.secrets.get(
+        "BACKEND_URL",
+        os.getenv("BACKEND_URL", "http://localhost:8000")
+    ).rstrip("/")
+except Exception:
+    BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="FinAI | Research Assistant",
