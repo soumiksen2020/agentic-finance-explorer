@@ -1,9 +1,12 @@
+import sys
+from pathlib import Path
+from crewai.mcp import MCPServerStdio
 import json
 import os
 from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, LLM
 from crewai_tools import SerperDevTool
-from tools import stock_price_analyzer
+# from tools import stock_price_analyzer
 from pydantic import BaseModel, Field
 from typing import List
 
@@ -72,6 +75,16 @@ def run_financial_analysis(ticker: str):
     print("\n--- SERPER NEWS RESULTS FETCHED ---")
     print(news_search_results)
 
+    # Configure local MCP server for stock technical analysis
+    project_root = Path(__file__).resolve().parent
+    mcp_server_path = project_root / "mcp_server" / "server.py"
+
+    mcp_stock_server = MCPServerStdio(
+        command=sys.executable,
+        args=[str(mcp_server_path)],
+        cache_tools_list=True
+    )
+
     llm = LLM(
         model="groq/openai/gpt-oss-120b",
         api_key=os.getenv("GROQ_API_KEY"),
@@ -87,7 +100,8 @@ def run_financial_analysis(ticker: str):
         backstory="""You are a precise technical analyst at a Mumbai-based
         financial research firm. You specialize in stock price movements,
         RSI, moving averages, and technical market signals.""",
-        tools=[stock_price_analyzer],
+        # tools=[stock_price_analyzer],
+        mcps=[mcp_stock_server],
         llm=llm,
         verbose=True,
         allow_delegation=False,
@@ -430,7 +444,7 @@ def run_financial_analysis(ticker: str):
         """,
         agent=report_writer,
         context=[tech_task, risk_task, fact_check_task],
-        # output_json=FinancialAnalysisOutput
+        output_json=FinancialAnalysisOutput
     )
 
     # 4. Assemble & Execute Crew
